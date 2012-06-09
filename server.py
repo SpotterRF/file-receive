@@ -27,6 +27,7 @@ class TCPUploadReceive(SocketServer.StreamRequestHandler):
         http        = False
         bufferSize  = 4096
         index       = 0
+        expectedLength = 0
 
         log(tempFile + " opened for writing.")
 
@@ -38,28 +39,38 @@ class TCPUploadReceive(SocketServer.StreamRequestHandler):
             log("Receiving file from {}...".format(self.client_address[0]))
 
         def finishHttp(good):
+            log("Finishing HTTP connection")
             if good:
                 self.wfile.write('HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
-                self.request.close()
             else:
                 self.wfile.write('{ "success": false, "message": "Bad mime type." }')
-                f.close()
                 log("Bad mime type detected on HTTP POST. Killing transfer.")
+            self.request.close()
 
         while not done:
-            if index > 0 and http:
-                self.wfile.write('HTTP/1.1 100 Continue\r\n\r\n')
 
-            bufferData = self.request.recv(bufferSize).strip()
+            bufferData = self.request.recv(bufferSize) #.strip()
 
             if index == 0 and checkHttp(bufferData):
+                log("on first chunk and found HTTP header")
                 http = True
+                matches = re.search('([\w\W]+?)(\r\n\r\n|\r\r|\n\n){1}([\w\W]*)', bufferData, re.M)
+                headers = matches.group(1).split('\r\n|\r|\n')
+                body = matches.group(3)
+                for header in headers:
+                    if re.search('^expect.*', header, re.I):
+                        self.wfile.write('HTTP/1.1 100 Continue\r\n\r\n')
+                    if re.search('^Content-length', header, re.I):
+                        expectedLength = int(re.search('^content-length:\s+(.*)', header, re.I).group(1))
+                        log('found content length header')
+                f.write(body)
                 index += 1
                 continue
 
             if bufferData != "":
                 f.write(bufferData)
-                if http and len(bufferData) < bufferSize:
+                if http and len(bufferData) < bufferSize and index > 0:
+                    log("starting the end")
                     finishHttp(True)
                     break
             else:
