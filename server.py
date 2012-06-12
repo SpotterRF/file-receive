@@ -26,6 +26,7 @@ class TCPUploadReceive(SocketServer.StreamRequestHandler):
         f           = open(tempFile, 'w')
         http        = False
         bufferSize  = 4096
+        recvLength   = 0
         index       = 0
         expectedLength = 0
 
@@ -55,21 +56,27 @@ class TCPUploadReceive(SocketServer.StreamRequestHandler):
                 log("on first chunk and found HTTP header")
                 http = True
                 matches = re.search('([\w\W]+?)(\r\n\r\n|\r\r|\n\n){1}([\w\W]*)', bufferData, re.M)
-                headers = matches.group(1).split('\r\n|\r|\n')
+                headers = matches.group(1) 
+                headers = headers.split('\r\n')
+                print(headers)
                 body = matches.group(3)
                 for header in headers:
                     if re.search('^expect.*', header, re.I):
                         self.wfile.write('HTTP/1.1 100 Continue\r\n\r\n')
-                    if re.search('^Content-length', header, re.I):
-                        expectedLength = int(re.search('^content-length:\s+(.*)', header, re.I).group(1))
+                    if re.search('^Content-Length', header, re.I):
                         log('found content length header')
+                        expectedLength = int(re.search('^content-length:\s+(.*)', header, re.I).group(1))
                 f.write(body)
+                recvLength += len(body)
                 index += 1
                 continue
 
-            if bufferData != "":
+            log("%i/%i" % (recvLength, expectedLength))
+            
+            if recvLength < expectedLength:
+                recvLength += len(bufferData)
                 f.write(bufferData)
-                if http and len(bufferData) < bufferSize and index > 0:
+                if http and recvLength == expectedLength:
                     log("starting the end")
                     finishHttp(True)
                     break
